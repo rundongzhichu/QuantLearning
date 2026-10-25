@@ -11,8 +11,24 @@
 回测频率建议：日。
 """
 from jqdata import *
-from JoinQuant.common.indicators import boll
-from JoinQuant.common.utils import close_position
+
+
+# ---- 以下公共函数从 JoinQuant.common 内联，使本文件自包含（common 包保留） ----
+
+def boll(close, window=20, num_std=2.0):
+    """布林带。返回 (中轨 mid, 上轨 upper, 下轨 lower)。"""
+    mid = close.rolling(window).mean()
+    std = close.rolling(window).std(ddof=0)
+    upper = mid + num_std * std
+    lower = mid - num_std * std
+    return mid, upper, lower
+
+
+def close_position(context, security):
+    """清空某只股票的持仓（只卖可卖数量）。"""
+    position = context.portfolio.positions.get(security)
+    if position is not None and position.closeable_amount > 0:
+        order_target(security, 0)
 
 
 def initialize(context):

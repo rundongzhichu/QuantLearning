@@ -11,7 +11,24 @@
 回测频率建议：日。
 """
 from jqdata import *
-from JoinQuant.common.utils import filter_stocks
+
+
+# ---- 以下公共函数从 JoinQuant.common 内联，使本文件自包含（common 包保留） ----
+
+def filter_stocks(stock_list):
+    """过滤停牌、ST、退市整理等不可交易股票，返回可交易列表。"""
+    current_data = get_current_data()
+    result = []
+    for stock in stock_list:
+        cd = current_data[stock]
+        if cd.paused:              # 停牌
+            continue
+        if cd.is_st:               # ST / *ST
+            continue
+        if '退' in cd.name:        # 退市整理
+            continue
+        result.append(stock)
+    return result
 
 
 def initialize(context):

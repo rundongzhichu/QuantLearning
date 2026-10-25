@@ -33,21 +33,18 @@ JoinQuant/
 ## 怎么运行
 
 **本地结构说明**：本仓库用 Python 包组织代码，方便复用与维护。
-`common/indicators.py` 和 `common/metrics.py` 是纯函数，本地即可用：
+`common/` 包仍然保留，其中 `common/indicators.py` 和 `common/metrics.py` 是纯函数，本地即可用：
 
 ```bash
 python3 -c "from JoinQuant.common.indicators import ma, rsi; print(ma.__name__, rsi.__name__)"
 ```
 
 **在聚宽网页回测端运行**：聚宽回测是"一个回测一个脚本"，不识别本仓库的包导入。
-运行某个策略时，需要把该策略文件连同它用到的 `common` 函数**合并成单个文件**再粘贴，
-或使用聚宽的「本地库 / 研究」上传模块功能。
+为便于直接粘贴运行，`strategies/` 下每个策略文件都是**自包含**的：
+它们依赖的 `common` 公共函数（如 `ma`、`boll`、`rsi`、`close_position`、
+`filter_stocks`、`stop_loss_check` 等）已经内联在各自文件里，无需再手动合并。
 
-每个策略文件顶部注释已列出它 `from JoinQuant.common.xxx import ...` 用到的函数，
-合并时把这些函数复制进策略文件即可。例如 `dual_ma.py` 用到了：
-
-- `common/indicators.py` 的 `ma`
-- `common/utils.py` 的 `close_position`、`stop_loss_check`
+`common/` 包仅作为本地学习/复用的公共库保留，策略文件不再 `import JoinQuant.common.*`。
 
 ## 关键 API 速查
 

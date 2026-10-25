@@ -11,8 +11,33 @@
 回测频率建议：日。
 """
 from jqdata import *
-from JoinQuant.common.indicators import ma
-from JoinQuant.common.utils import close_position, stop_loss_check
+
+
+# ---- 以下公共函数从 JoinQuant.common 内联，使本文件自包含（common 包保留） ----
+
+def ma(series, window):
+    """简单移动平均 SMA。"""
+    return series.rolling(window).mean()
+
+
+def close_position(context, security):
+    """清空某只股票的持仓（只卖可卖数量）。"""
+    position = context.portfolio.positions.get(security)
+    if position is not None and position.closeable_amount > 0:
+        order_target(security, 0)
+
+
+def stop_loss_check(context, security, stop_loss_ratio=0.05):
+    """固定比例止损：亏损超过阈值则清仓。返回是否触发。"""
+    position = context.portfolio.positions.get(security)
+    if position is None or position.total_amount == 0:
+        return False
+    profit_ratio = (position.price - position.avg_cost) / position.avg_cost
+    if profit_ratio <= -stop_loss_ratio:
+        close_position(context, security)
+        log.info('止损卖出 %s，亏损 %.2f%%' % (security, profit_ratio * 100))
+        return True
+    return False
 
 
 def initialize(context):

@@ -11,8 +11,26 @@ RSI 超买超卖策略。
 回测频率建议：日。
 """
 from jqdata import *
-from JoinQuant.common.indicators import rsi
-from JoinQuant.common.utils import close_position
+
+
+# ---- 以下公共函数从 JoinQuant.common 内联，使本文件自包含（common 包保留） ----
+
+def rsi(close, window=14):
+    """相对强弱指标 RSI（Wilder 平滑，alpha=1/window）。返回 0~100 的序列。"""
+    diff = close.diff()
+    gain = diff.clip(lower=0.0)
+    loss = (-diff).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / window, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / window, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100.0 - 100.0 / (1.0 + rs)
+
+
+def close_position(context, security):
+    """清空某只股票的持仓（只卖可卖数量）。"""
+    position = context.portfolio.positions.get(security)
+    if position is not None and position.closeable_amount > 0:
+        order_target(security, 0)
 
 
 def initialize(context):
