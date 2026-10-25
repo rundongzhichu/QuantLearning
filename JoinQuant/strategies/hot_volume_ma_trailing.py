@@ -33,7 +33,7 @@
 - 移动止盈后 3 天内禁止买入
 
 说明：本文件自包含，不依赖 JoinQuant.common 等公共模块。
-选股依赖 10:30 前分钟级成交额，移动止盈与节前 14:30 买入同为分钟级，回测请务必选“分钟”频率；日线回测下选股与盘中逻辑会不准确。
+选股依赖 10:30 前分钟级成交额，严格止损与移动止盈同为分钟级，回测请务必选“分钟”频率；日线回测下选股与盘中逻辑会不准确。
 """
 from jqdata import *
 from datetime import timedelta
@@ -83,7 +83,7 @@ def initialize(context):
     )
     log.set_level('order', 'error')
 
-    g.candidates = []       # 今日候选（涨幅为正、成交额前3的申万二级行业 × 各行业成交额前3）
+    g.candidates = []       # 今日候选（上一交易日涨幅为正、成交额前3的申万二级行业 × 各行业成交额前3）
     g.qualified = set()     # 今日合格池（通过全部选股条件的股票）
     g.pre_close = {}        # 昨收价缓存 {股票: 昨收}，供盘中严格止损使用
     g.exposure = 0.0        # 风控·择时输出：今日目标总仓位
@@ -109,7 +109,7 @@ def initialize(context):
 
 
 def before_trading(context):
-    """风控（择时 + 空仓状态 + 节假日）。选股在 open_positions（10:30）。"""
+    """风控（择时 + 空仓状态 + 节假日）。选股在 open_positions（10:30，用当日数据）。"""
     g.exposure = compute_exposure(context)               # 风控·择时
     g.candidates = []
     g.qualified = set()
@@ -117,18 +117,6 @@ def before_trading(context):
     g.holiday_state = compute_holiday_state(context)     # 风控·节假日
 
     update_risk_state(context)                            # 风控·空仓状态：清理冷却、级联递减
-
-    # 缓存当前持仓的昨收价，供盘中严格止损（涨幅跌破下限）使用
-    g.pre_close = {}
-    positions = context.portfolio.positions
-    held = [s for s in positions if positions[s].total_amount > 0]
-    if held:
-        df_prev = get_price(held, end_date=context.previous_date, count=1,
-                            fields=['close'], panel=False, skip_paused=True)
-        if df_prev is not None and len(df_prev) > 0:
-            df_prev = df_prev.reset_index()
-            if 'code' in df_prev.columns and 'close' in df_prev.columns:
-                g.pre_close = dict(zip(df_prev['code'], df_prev['close']))
 
     if g.exposure <= 0:
         log.info('指数空仓信号（下跌趋势或缩量）')
@@ -163,7 +151,7 @@ def market_open(context):
 
 
 def open_positions(context):
-    """10:30：选股 → 名额分配 + 下单开仓（买不起一手补位）。严格止损在盘中每 bar 监控。"""
+    """10:30：选股（当日数据）→ 名额分配 + 下单开仓。严格止损在盘中每 bar 监控。"""
     if empty_reason(context) is not None:
         return
     if g.holiday_state == 'clear_day':
@@ -491,6 +479,7 @@ def build_universe(context):
 def pick_candidates(context, universe):
     """选股·候选：10:30 时成交额最大且涨幅为正的前 CANDIDATE_N 个申万二级行业，各行业取成交额前 PER_SECTOR_N 只。"""
     if not universe:
+        log.info('[选股] 股票池为空')
         return []
     universe_set = set(universe)
     today = context.current_dt.date()
@@ -499,9 +488,12 @@ def pick_candidates(context, universe):
     # 1) 申万二级行业 → 成分股（与股票池取交集）
     try:
         industries = get_industries(name='sw_l2', date=prev)
-    except Exception:
+    except Exception as e:
+
         industries = None
+        log.info('[选股] 申万二级行业获取失败：%s' % e)
     if industries is None or len(industries) == 0:
+        log.info('[选股] 申万二级行业列表为空')
         return []
 
     industry_stocks = {}
@@ -514,6 +506,7 @@ def pick_candidates(context, universe):
         if members:
             industry_stocks[code] = members
     if not industry_stocks:
+        log.info('[选股] 行业成分股与股票池交集为空')
         return []
 
     # 2) 昨收（用于涨幅），并缓存供盘中严格止损
@@ -526,15 +519,24 @@ def pick_candidates(context, universe):
             pre_close = dict(zip(df_close['code'], df_close['close']))
             g.pre_close.update(pre_close)
 
-    # 3) 当日分钟数据（回测引擎截断到当前 10:30）→ 每只股票成交额 + 最新价
-    df = get_price(universe, start_date=today, end_date=today,
+    # 3) 当日分钟数据：9:30 开盘到当前 10:30 共 61 根，取每只股票成交额 + 最新价
+    df = get_price(universe, end_date=context.current_dt, count=61,
                    frequency='1m', fields=['money', 'close'],
                    panel=False, skip_paused=True)
     if df is None or len(df) == 0:
+        log.info('[选股] 当日分钟数据为空（universe %d 只）' % len(universe))
         return []
     df = df.reset_index()   # 列：time, code, money, close
     if 'code' not in df.columns or 'money' not in df.columns or 'close' not in df.columns:
+        log.info('[选股] 分钟数据列异常：%s' % list(df.columns))
         return []
+
+    # 只保留今日的分钟 bar（防止 10:30 bar 未生成时混入前一日尾盘）
+    if 'time' in df.columns:
+        try:
+            df = df[df['time'].dt.date == today]
+        except Exception:
+            pass
 
     amount = {}
     last_price = {}
@@ -570,7 +572,10 @@ def pick_candidates(context, universe):
         valid = [s for s in members if amount.get(s, 0.0) > 0]
         valid.sort(key=lambda s: amount.get(s, 0.0), reverse=True)
         candidates.extend(valid[:PER_SECTOR_N])
+
+    log.info('[选股] 涨幅为正板块 %d 个，候选 %d 只' % (len(scored), len(candidates)))
     return candidates
+
 
 
 # ================================================================
